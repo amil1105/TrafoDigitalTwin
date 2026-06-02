@@ -379,9 +379,9 @@ public class SCADAHMIController : MonoBehaviour
         switch (componentName)
         {
             case "Transformer":
-                if (mqttReceiver != null && mqttReceiver.GetLastRealTemperature() > 85f)
+                if (mqttReceiver != null && mqttReceiver.IsTelemetryAttackActive() && mqttReceiver.GetLastRealTemperature() > 85f)
                     return "FAULT";
-                if (mqttReceiver != null && mqttReceiver.GetLastRealTemperature() > 70f)
+                if (mqttReceiver != null && mqttReceiver.IsTelemetryAttackActive() && mqttReceiver.GetLastRealTemperature() > 80f)
                     return "SUSPECT";
                 if (coolingFalseDataReceiver != null && coolingFalseDataReceiver.RealTemperature > 80f)
                     return coolingFalseDataReceiver.IsAlarmSuppressionActive ? "NORMAL" : "FAULT";

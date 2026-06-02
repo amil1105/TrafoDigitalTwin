@@ -39,6 +39,15 @@ public class AlarmPanelController : MonoBehaviour
         RefreshUI();
     }
 
+    public void RemoveAlarmsContaining(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return;
+
+        alarms.RemoveAll(alarm => alarm.Contains(text));
+        RefreshUI();
+    }
+
     public IReadOnlyList<string> GetAlarms()
     {
         return alarms;

@@ -25,7 +25,7 @@ public class SimpleMQTTReceiver : MonoBehaviour
     public Color warningColor = new Color(1f, 0.78f, 0.12f, 1f);
     public Color criticalColor = new Color(1f, 0.18f, 0.08f, 1f);
     public Color failureColor = new Color(0.22f, 0.02f, 0.02f, 1f);
-    public float warningThreshold = 70f;
+    public float warningThreshold = 80f;
     public float criticalThreshold = 85f;
     public float smokeThreshold = 100f;
     public float failureThreshold = 110f;
@@ -50,9 +50,9 @@ public class SimpleMQTTReceiver : MonoBehaviour
     private bool isRunning = true;
     
     // Son alinan veriler
-    private float lastTemperature = 72f;
-    private float lastDisplayedTemperature = 72f;
-    private float lastRealTemperature = 72f;
+    private float lastTemperature = 58f;
+    private float lastDisplayedTemperature = 58f;
+    private float lastRealTemperature = 58f;
     private float lastOilTemperature = 60f;
     private float lastVoltage = 154f;
     private float lastSecondaryVoltage = 34.5f;
@@ -77,6 +77,7 @@ private string lastRawJson = "";
     private string lastThermalStatus = "";
     private Vector3 originalCameraPosition;
     private bool hasCameraOriginalPosition = false;
+    private bool cameraShakeActive = false;
     
     void Start()
     {
@@ -101,7 +102,6 @@ private string lastRawJson = "";
         
         // Son mesaj zamanını başlat
         lastMessageTime = Time.time;
-        CaptureCameraPosition();
         ApplyThermalEffects();
         
         Debug.Log("SimpleMQTTReceiver Başlatıldı - Saldırı simülasyonu için hazır");
@@ -354,11 +354,12 @@ void ParseSensorData(string jsonData)
         if (temperatureText != null)
         {
             temperatureText.text = $"{displayTemp:F1}°C";
-            if (lastRealTemperature > criticalThreshold)
+            bool showThermalAttackWarning = IsTemperatureAttackScenarioActive();
+            if (showThermalAttackWarning && lastRealTemperature > criticalThreshold)
             {
                 temperatureText.color = Color.red;
             }
-            else if (lastRealTemperature > warningThreshold)
+            else if (showThermalAttackWarning && lastRealTemperature > warningThreshold)
             {
                 temperatureText.color = Color.yellow;
             }
@@ -430,9 +431,10 @@ void ParseSensorData(string jsonData)
 
     void ApplyThermalEffects()
     {
-        string status = GetThermalStatus(lastRealTemperature);
-        bool smokeActive = lastRealTemperature > smokeThreshold;
-        bool failureActive = lastRealTemperature > failureThreshold;
+        bool temperatureAttackActive = IsTemperatureAttackScenarioActive();
+        string status = temperatureAttackActive ? GetThermalStatus(lastRealTemperature) : "NORMAL";
+        bool smokeActive = temperatureAttackActive && lastRealTemperature > smokeThreshold;
+        bool failureActive = temperatureAttackActive && lastRealTemperature > failureThreshold;
 
         ApplyTransformerColor(status);
         ApplySmoke(smokeActive);
@@ -524,7 +526,7 @@ void ParseSensorData(string jsonData)
 
         if (active && enableFailureCameraShake)
             ApplyCameraShake();
-        else
+        else if (cameraShakeActive)
             RestoreCameraPosition();
     }
 
@@ -549,12 +551,14 @@ void ParseSensorData(string jsonData)
         Vector3 offset = UnityEngine.Random.insideUnitSphere * cameraShakeAmount;
         offset.z = 0f;
         cameraShake.transform.localPosition = originalCameraPosition + offset;
+        cameraShakeActive = true;
     }
 
     void RestoreCameraPosition()
     {
         if (cameraShake != null && hasCameraOriginalPosition)
             cameraShake.transform.localPosition = originalCameraPosition;
+        cameraShakeActive = false;
     }
 
     void RaiseAlarmForStatus(string status)
@@ -566,6 +570,7 @@ void ParseSensorData(string jsonData)
         {
             if (alarmPanel != null)
                 alarmPanel.SetActive(false);
+            ClearSimpleThermalAlarms();
             return;
         }
 
@@ -593,6 +598,22 @@ void ParseSensorData(string jsonData)
                 alarmPanelController.AddAlarm("Transformer failure", AlarmPanelController.AlarmSeverity.Critical);
             ShowAlarm("FAILURE: Transformer failure");
         }
+    }
+
+    bool IsTemperatureAttackScenarioActive()
+    {
+        return telemetryAttackActive || (isUnderAttack && attackType == "temperature");
+    }
+
+    void ClearSimpleThermalAlarms()
+    {
+        if (alarmPanelController == null)
+            return;
+
+        alarmPanelController.RemoveAlarmsContaining("Transformer temperature warning");
+        alarmPanelController.RemoveAlarmsContaining("Critical transformer temperature");
+        alarmPanelController.RemoveAlarmsContaining("Transformer overheating smoke detected");
+        alarmPanelController.RemoveAlarmsContaining("Transformer failure");
     }
     
     void ShowAlarm(string message)

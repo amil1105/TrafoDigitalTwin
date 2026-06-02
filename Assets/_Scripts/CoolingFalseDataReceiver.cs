@@ -241,9 +241,12 @@ public class CoolingFalseDataReceiver : MonoBehaviour
             case "substation/transformer/real_temperature":
                 if (float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out float real))
                     realTemperature = real;
-                ApplyHeatState();
                 ApplyTemperatureText();
-                AppendLog($"Real transformer temperature: {realTemperature:F0} C");
+                if (falseDataInjectionActive || alarmSuppressionOn)
+                {
+                    ApplyHeatState();
+                    AppendLog($"Real transformer temperature: {realTemperature:F0} C");
+                }
                 break;
 
             case "substation/effect/smoke":
