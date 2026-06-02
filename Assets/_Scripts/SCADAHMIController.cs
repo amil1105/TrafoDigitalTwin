@@ -355,6 +355,8 @@ public class SCADAHMIController : MonoBehaviour
                 systemModeText.text = "CYBER SECURITY EVENT";
             else if (mqttReceiver != null && mqttReceiver.IsTelemetryAttackActive())
                 systemModeText.text = "CYBER SECURITY EVENT";
+            else if (coolingFalseDataReceiver != null && coolingFalseDataReceiver.IsVoltageAlarmActive)
+                systemModeText.text = "CYBER SECURITY EVENT";
             else if (coolingFalseDataReceiver != null && coolingFalseDataReceiver.IsFalseDataInjectionActive)
                 systemModeText.text = "CYBER SECURITY EVENT";
             else if (iedController != null && iedController.attackDetected)
@@ -385,6 +387,12 @@ public class SCADAHMIController : MonoBehaviour
                     return coolingFalseDataReceiver.IsAlarmSuppressionActive ? "NORMAL" : "FAULT";
                 return iedController.faultDetected ? "FAULT" : "NORMAL";
             case "Busbar":
+                if (coolingFalseDataReceiver != null && coolingFalseDataReceiver.IsVoltageSagAlarmActive)
+                    return "FAULT";
+                if (coolingFalseDataReceiver != null && coolingFalseDataReceiver.IsVoltageOverAlarmActive)
+                    return "FAULT";
+                if (coolingFalseDataReceiver != null && coolingFalseDataReceiver.IsVoltageImbalanceAlarmActive)
+                    return "SUSPECT";
                 return iedController.faultDetected ? "FAULT" : "NORMAL";
             case "Circuit Breaker":
                 return circuitBreaker.GetStateLabel();

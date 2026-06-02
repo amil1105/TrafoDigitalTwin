@@ -37,6 +37,7 @@ Sistem genel olarak üç katmandan oluşur:
      - `Assets/_Scripts/AttackScripts/breaker_attack.py`
      - `Assets/_Scripts/AttackScripts/cooling_false_data_attack.py`
      - `Assets/_Scripts/AttackScripts/oil_critical_alarm_attack.py`
+     - `Assets/_Scripts/AttackScripts/voltage_sag_attack.py`
 
 2. **MQTT Haberleşme Katmanı**
    - Mosquitto broker `localhost:1883` üzerinde çalışır.
@@ -183,6 +184,38 @@ substation/transformer/oil_alarm
 
 Bu topic’ler yağ sıcaklığı, yağ seviyesi ve Buchholz rölesi alarm senaryosu için kullanılır.
 
+### 6.4. Bara Gerilim Dengesizliği / Voltage Sag Topic’leri
+
+```text
+substation/attack/type
+substation/busbar/voltage/a
+substation/busbar/voltage/b
+substation/busbar/voltage/c
+substation/busbar/voltage_alarm
+```
+
+Bu topic’ler bara gerilim dengesizliği, düşük gerilim ve aşırı gerilim senaryosu için kullanılır. A, B ve C faz değerleri ayrı MQTT mesajlarıyla gönderilir. `substation/busbar/voltage_alarm` topic’i `SAG`, `CRITICAL`, `ON` veya `OFF` değerleriyle alarmın başlatılması ve temizlenmesi için kullanılır.
+
+Örnek voltage sag mesaj dizisi:
+
+```text
+substation/attack/type = voltage_sag
+substation/busbar/voltage/a = 24.8
+substation/busbar/voltage/b = 31.6
+substation/busbar/voltage/c = 35.2
+substation/busbar/voltage_alarm = SAG
+```
+
+Örnek over voltage mesaj dizisi:
+
+```text
+substation/attack/type = voltage_over
+substation/busbar/voltage/a = 39.8
+substation/busbar/voltage/b = 35.4
+substation/busbar/voltage/c = 34.8
+substation/busbar/voltage_alarm = CRITICAL
+```
+
 ## 7. MQTT Receiver Yapıları
 
 Unity tarafında MQTT mesajlarını alan birden fazla receiver script bulunur.
@@ -221,6 +254,7 @@ Gelen JSON payload `BreakerController` scriptine iletilir. Receiver kendi içind
 - Transformer oil level
 - Buchholz relay warning
 - Oil critical alarm
+- Busbar voltage sag / over voltage / phase imbalance alarm
 
 Bu script ayrıca MQTT reconnect davranışı da içerir. Broker Unity’den sonra başlatılırsa receiver belirli aralıklarla yeniden bağlanmayı dener:
 
@@ -598,7 +632,150 @@ Oil temperature: 55 C
 Oil level: 78%
 ```
 
-## 12. Normal Operasyon ve Saldırı Karşılaştırması
+## 12. Saldırı Senaryosu 4: Bara Gerilim Dengesizliği / Voltage Sag
+
+Bu senaryo, trafo merkezi barasında A, B ve C faz gerilimlerinin bozulmasını simüle eder. Saldırı veya arıza sonucunda bir fazda düşük gerilim, başka bir fazda normal veya yüksek gerilim görülebilir. Bu durum koruma rölesi açısından `UNDER VOLTAGE`, `OVER VOLTAGE` veya faz dengesizliği alarmı üretir.
+
+### 12.1. Elektriksel ve Operasyonel Arka Plan
+
+Bara sistemi, trafo merkezindeki enerji dağıtımının ortak bağlantı noktasıdır. Bara gerilimi dengesiz hale geldiğinde bağlı yüklerde gerilim kalitesi bozulur, ekipmanlarda ısınma, koruma açması veya hassas cihazlarda hatalı çalışma görülebilir.
+
+Bu nedenle voltage sag senaryosu dijital ikiz için güçlü bir siber-fiziksel karşılığa sahiptir:
+
+- Faz gerilimleri normal nominal değerden sapar.
+- SCADA’da bara durumu `FAULT` veya `SUSPECT` olarak görünür.
+- Koruma rölesi `UNDER VOLTAGE` veya `OVER VOLTAGE` alarmı üretir.
+- Alarm paneli kritik alarm gösterir.
+- Alarm ışığı ve alarm sesi çalışır.
+- Kamera 5 saniye olay bölgesine focus yapar.
+
+### 12.2. Python Script
+
+Bu senaryo için kullanılan script:
+
+```text
+Assets/_Scripts/AttackScripts/voltage_sag_attack.py
+```
+
+Script menülü çalışır:
+
+```text
+1 - Start Voltage Sag + Phase Imbalance
+2 - Start Over Voltage + Phase Imbalance
+3 - Stop Scenario / Restore Normal
+q - Quit
+```
+
+Script her komuttan sonra kapanmaz; kullanıcı aynı terminal oturumunda saldırıyı başlatabilir, farklı varyasyonu deneyebilir ve sistemi normale döndürebilir.
+
+### 12.3. Voltage Sag Başlatma Mesajları
+
+`1 - Start Voltage Sag + Phase Imbalance` seçildiğinde yayınlanan mesajlar:
+
+```text
+substation/attack/type = voltage_sag
+substation/busbar/voltage/a = 24.8
+substation/busbar/voltage/b = 31.6
+substation/busbar/voltage/c = 35.2
+substation/busbar/voltage_alarm = SAG
+```
+
+Bu değerler nominal 34.5 kV bara gerilimine göre A fazında ciddi düşüş, B fazında orta seviye sapma ve C fazında normale yakın değer temsil eder. Fazlar arasındaki fark büyük olduğu için sistem hem düşük gerilim hem de faz dengesizliği olarak değerlendirilir.
+
+### 12.4. Over Voltage Başlatma Mesajları
+
+`2 - Start Over Voltage + Phase Imbalance` seçildiğinde yayınlanan mesajlar:
+
+```text
+substation/attack/type = voltage_over
+substation/busbar/voltage/a = 39.8
+substation/busbar/voltage/b = 35.4
+substation/busbar/voltage/c = 34.8
+substation/busbar/voltage_alarm = CRITICAL
+```
+
+Bu varyasyonda A fazı aşırı gerilim bölgesine çıkar. Fazlar arası fark nedeniyle dengesizlik alarmı da anlamlıdır. Böylece aynı senaryo hem düşük gerilim hem de aşırı gerilim davranışını gösterebilir.
+
+### 12.5. Unity Davranışı
+
+`CoolingFalseDataReceiver.cs`, `substation/#` aboneliği üzerinden gerilim topic’lerini alır. Script içinde nominal faz gerilimi ve alarm eşikleri tanımlıdır:
+
+```text
+nominalPhaseVoltage = 34.5
+voltageSagThreshold = 30
+voltageOverThreshold = 38
+voltageImbalanceThreshold = 3
+```
+
+Unity tarafında çalışan temel IDS mantığı:
+
+```text
+if any phase voltage < 30 kV:
+    UNDER VOLTAGE ALARM
+
+if any phase voltage > 38 kV:
+    OVER VOLTAGE ALARM
+
+if max(voltageA, voltageB, voltageC) - min(voltageA, voltageB, voltageC) >= 3 kV:
+    Phase Imbalance Alarm
+```
+
+Alarm tetiklendiğinde SCADA terminalinde şu loglar üretilir:
+
+```text
+BUSBAR VOLTAGE SAG / IMBALANCE DETECTED
+Voltage A: 24.8 kV
+Voltage B: 31.6 kV
+Voltage C: 35.2 kV
+UNDER VOLTAGE ALARM
+IED VOLTAGE PROTECTION WARNING
+```
+
+Over voltage varyasyonunda `UNDER VOLTAGE ALARM` yerine `OVER VOLTAGE ALARM` yazılır.
+
+### 12.6. SCADA ve Dijital İkiz Çıktısı
+
+Senaryo aktif olduğunda:
+
+- SCADA sistem modu `CYBER SECURITY EVENT` durumuna geçer.
+- Busbar bileşeni `FAULT` veya `SUSPECT` olarak gösterilir.
+- Alarm paneline `BUSBAR VOLTAGE SAG / IMBALANCE` alarmı eklenir.
+- Koruma rölesi uyarısı `IED VOLTAGE PROTECTION WARNING` olarak loglanır.
+- Alarm ışığı kırmızı yanıp söner.
+- Alarm sesi çalmaya başlar.
+- Duman efekti olay görünürlüğü için aktif edilir.
+- Kamera 5 saniye boyunca olay bölgesine focus yapar ve süre bitince freecam kontrolü kullanıcıya geri döner.
+
+Bu senaryoda dijital ikiz, yalnızca sayısal gerilim değerini değil, gerilim kalitesi bozulmasının operatör ekranındaki ve fiziksel sahnedeki sonucunu da gösterir.
+
+### 12.7. Restore Mesajları
+
+`3 - Stop Scenario / Restore Normal` seçildiğinde yayınlanan mesajlar:
+
+```text
+substation/busbar/voltage/a = 34.5
+substation/busbar/voltage/b = 34.5
+substation/busbar/voltage/c = 34.5
+substation/busbar/voltage_alarm = OFF
+substation/effect/smoke = OFF
+substation/attack/type = none
+```
+
+Restore sonrasında:
+
+- A, B ve C fazları 34.5 kV nominal değere döner.
+- Voltage alarm state kapanır.
+- Duman efekti kapanır.
+- Alarm ışığı eski durumuna döner.
+- Alarm sesi durur.
+- SCADA log:
+
+```text
+Busbar voltage alarm cleared
+Voltage A/B/C: 34.5/34.5/34.5 kV
+```
+
+## 13. Normal Operasyon ve Saldırı Karşılaştırması
 
 | Durum | Normal Operasyon | Saldırı Durumu |
 |---|---|---|
@@ -607,17 +784,19 @@ Oil level: 78%
 | Soğutma | Fan/soğutma aktif çalışır | Soğutma OFF yapılır |
 | Yağ sistemi | Yağ sıcaklığı ve seviye normaldir | Yağ sıcaklığı yüksek, seviye düşüktür |
 | Buchholz | CLEAR/NORMAL | WARNING |
+| Bara gerilimi | A/B/C fazları nominal ve dengelidir | Voltage sag, over voltage veya faz dengesizliği oluşur |
+| Koruma rölesi | Gerilim alarmı yoktur | UNDER/OVER VOLTAGE uyarısı üretir |
 | SCADA | Normal operation gösterir | Kritik alarm gösterir |
 | Fiziksel efekt | Duman yok | Duman var |
 | Alarm ışığı | Kapalı/eski durumunda | Kırmızı yanıp söner |
 | Alarm sesi | Yok | Loop alarm sesi |
 | Kamera | Kullanıcı kontrolünde | 5 saniye olay yerine focus |
 
-## 13. IDS Yaklaşımı
+## 14. IDS Yaklaşımı
 
 Projede kullanılan IDS mantığı kural tabanlıdır. Gerçek bir makine öğrenmesi modeli veya gelişmiş ağ tabanlı IDS kullanılmamıştır. Bunun yerine belirli topic ve payload değerlerine göre saldırı tespiti yapılır.
 
-### 13.1. Kesici IDS Kuralları
+### 14.1. Kesici IDS Kuralları
 
 ```text
 if source == "unauthorized":
@@ -629,7 +808,7 @@ if maintenanceMode == true and command == "CLOSE":
     Breaker Closed During Maintenance Mode
 ```
 
-### 13.2. Cooling FDI IDS Kuralları
+### 14.2. Cooling FDI IDS Kuralları
 
 ```text
 if realTemperature > criticalTemperature:
@@ -641,7 +820,7 @@ if alarmSuppression == ON:
     Alarm Suppression Active
 ```
 
-### 13.3. Oil Critical Alarm IDS Kuralları
+### 14.3. Oil Critical Alarm IDS Kuralları
 
 ```text
 if oilTemperature >= criticalOilTemperature:
@@ -658,13 +837,30 @@ if buchholz == WARNING:
     BUCHHOLZ RELAY WARNING
 ```
 
+### 14.4. Voltage Sag / Faz Dengesizliği IDS Kuralları
+
+```text
+if voltageA < voltageSagThreshold or voltageB < voltageSagThreshold or voltageC < voltageSagThreshold:
+    UNDER VOLTAGE ALARM
+```
+
+```text
+if voltageA > voltageOverThreshold or voltageB > voltageOverThreshold or voltageC > voltageOverThreshold:
+    OVER VOLTAGE ALARM
+```
+
+```text
+if max(voltageA, voltageB, voltageC) - min(voltageA, voltageB, voltageC) >= voltageImbalanceThreshold:
+    BUSBAR VOLTAGE SAG / IMBALANCE DETECTED
+```
+
 Bu kurallar basit olmakla birlikte demo ve akademik anlatım için yeterlidir. Çünkü amaç, bir saldırı sinyalinin dijital ikizde fiziksel ve SCADA karşılığını göstermektir.
 
-## 14. Kamera Yönetimi
+## 15. Kamera Yönetimi
 
 Projede kamera davranışı saldırı senaryolarında önemli bir rol oynar. Normalde kullanıcı freecam ile sahnede dolaşabilir. Saldırı olduğunda ise sistem operatörün dikkatini ilgili fiziksel bileşene çekmek için otomatik focus yapar.
 
-Kesici senaryosunda kamera `circuit_breaker` nesnesine odaklanır. Duman/trafo senaryolarında kamera `TransformerSmoke` referans konumuna odaklanır.
+Kesici senaryosunda kamera `circuit_breaker` nesnesine odaklanır. Duman/trafo ve bara gerilim alarmı senaryolarında kamera `TransformerSmoke` referans konumuna odaklanır. Bu tercih, duman, alarm ışığı ve sesli alarm davranışının aynı olay bölgesinde görünmesini sağlar.
 
 Kamera focus davranışının hedefleri:
 
@@ -675,7 +871,7 @@ Kamera focus davranışının hedefleri:
 
 Bu davranış özellikle bitirme projesi sunumunda önemlidir. Çünkü jüri veya izleyici, MQTT mesajı ile fiziksel sonuç arasındaki ilişkiyi doğrudan gözlemler.
 
-## 15. Test Ortamı
+## 16. Test Ortamı
 
 Test için gerekli temel bileşenler:
 
@@ -699,9 +895,9 @@ cd "C:\Program Files\Mosquitto"
 
 PowerShell current directory’deki exe’leri otomatik çalıştırmadığı için `.\mosquitto.exe` yazmak gerekir.
 
-## 16. Demo Akışları
+## 17. Demo Akışları
 
-### 16.1. Genel Başlatma
+### 17.1. Genel Başlatma
 
 1. Mosquitto broker çalıştırılır.
 2. Unity projesi açılır.
@@ -714,7 +910,7 @@ PowerShell current directory’deki exe’leri otomatik çalıştırmadığı i�
 [BreakerMQTTReceiver] Connected to MQTT broker localhost:1883, subscribed to substation/breaker/control
 ```
 
-### 16.2. Kesici Saldırısı Testi
+### 17.2. Kesici Saldırısı Testi
 
 Komut:
 
@@ -733,7 +929,7 @@ Test:
 7. `2 - Unauthorized CLOSE` seçilirse kesici kapanır fakat olay yine saldırı olarak loglanır.
 8. `3` veya `4` seçilirse normal operatör komutu olarak işlenir.
 
-### 16.3. Cooling False Data Injection Testi
+### 17.3. Cooling False Data Injection Testi
 
 Komut:
 
@@ -753,7 +949,7 @@ Test:
 8. Kamera trafo/duman bölgesine 5 saniye focus yapar.
 9. `2` seçilirse sistem normale döner.
 
-### 16.4. Trafo Yağ Kritik Alarm Testi
+### 17.4. Trafo Yağ Kritik Alarm Testi
 
 Komut:
 
@@ -797,7 +993,59 @@ Oil temperature: 55 C
 Oil level: 78%
 ```
 
-## 17. Projenin Akademik Katkısı
+### 17.5. Bara Gerilim Dengesizliği / Voltage Sag Testi
+
+Komut:
+
+```powershell
+python Assets\_Scripts\AttackScripts\voltage_sag_attack.py
+```
+
+Voltage sag testi:
+
+1. `1 - Start Voltage Sag + Phase Imbalance` seçilir.
+2. MQTT mesajları yayınlanır:
+
+```text
+substation/attack/type = voltage_sag
+substation/busbar/voltage/a = 24.8
+substation/busbar/voltage/b = 31.6
+substation/busbar/voltage/c = 35.2
+substation/busbar/voltage_alarm = SAG
+```
+
+3. Unity console ve SCADA terminalde şu loglar görülür:
+
+```text
+BUSBAR VOLTAGE SAG / IMBALANCE DETECTED
+Voltage A: 24.8 kV
+Voltage B: 31.6 kV
+Voltage C: 35.2 kV
+UNDER VOLTAGE ALARM
+IED VOLTAGE PROTECTION WARNING
+```
+
+4. SCADA’da Busbar durumu `FAULT` olarak görünür.
+5. Alarm panelinde `BUSBAR VOLTAGE SAG / IMBALANCE` alarmı görünür.
+6. Alarm ışığı kırmızı yanıp söner.
+7. Alarm sesi başlar.
+8. Kamera 5 saniye focus yapar ve sonra freecam kontrolü geri gelir.
+9. `3 - Stop Scenario / Restore Normal` seçilir.
+10. Sistem normale döner:
+
+```text
+Busbar voltage alarm cleared
+Voltage A/B/C: 34.5/34.5/34.5 kV
+```
+
+Over voltage testi:
+
+1. Aynı script içinde `2 - Start Over Voltage + Phase Imbalance` seçilir.
+2. A fazı 39.8 kV değerine çıkar.
+3. SCADA terminalde `OVER VOLTAGE ALARM` görülür.
+4. `3` seçilerek sistem normale döndürülür.
+
+## 18. Projenin Akademik Katkısı
 
 Bu proje, enerji sistemlerinde siber güvenlik olaylarının yalnızca ağ seviyesinde değil, fiziksel operasyon seviyesinde de değerlendirilmesi gerektiğini gösterir. Klasik siber güvenlik analizlerinde saldırı genellikle paket, port, protokol veya log düzeyinde incelenir. Bu projede ise saldırının fiziksel sonucu dijital ikiz üzerinde gösterilir.
 
@@ -805,11 +1053,11 @@ Akademik katkılar:
 
 - MQTT tabanlı saldırı mesajlarının dijital ikiz üzerindeki fiziksel karşılıkları gösterilmiştir.
 - SCADA/HMI arayüzü ile siber saldırı farkındalığı görselleştirilmiştir.
-- Kesici, soğutma sistemi, trafo sıcaklığı, yağ seviyesi ve Buchholz rölesi gibi elektriksel bileşenler saldırı senaryolarına bağlanmıştır.
+- Kesici, soğutma sistemi, trafo sıcaklığı, yağ seviyesi, Buchholz rölesi ve bara gerilimi gibi elektriksel bileşenler saldırı senaryolarına bağlanmıştır.
 - Basit kural tabanlı IDS mantığı uygulanmıştır.
 - Alarm ışığı, alarm sesi, duman ve kamera focus ile olay farkındalığı artırılmıştır.
 
-## 18. Güçlü Yönler
+## 19. Güçlü Yönler
 
 Projenin güçlü yönleri:
 
@@ -822,7 +1070,7 @@ Projenin güçlü yönleri:
 - Kesici gibi mekanik bileşenlerde animasyon/fallback hareket desteği vardır.
 - MQTT broker sonradan açılsa bile bazı receiver yapıları reconnect yapabilir.
 
-## 19. Sınırlılıklar
+## 20. Sınırlılıklar
 
 Projenin mevcut sınırlılıkları:
 
@@ -836,7 +1084,7 @@ Projenin mevcut sınırlılıkları:
 
 Bu sınırlılıklar bitirme projesi kapsamında kabul edilebilir; çünkü hedef, gerçek trafo merkezi koruma sisteminin birebir endüstriyel uygulaması değil, dijital ikiz üzerinde siber-fiziksel saldırı farkındalığı oluşturmaktır.
 
-## 20. Gelecek Geliştirmeler
+## 21. Gelecek Geliştirmeler
 
 Projeye ileride şu geliştirmeler eklenebilir:
 
@@ -852,28 +1100,29 @@ Projeye ileride şu geliştirmeler eklenebilir:
 - Web tabanlı uzaktan izleme paneli
 - Birden fazla trafo, bara ve kesici için genişletilmiş model
 
-## 21. Sonuç
+## 22. Sonuç
 
 Bu proje, Unity 6 ve MQTT kullanılarak geliştirilen bir trafo merkezi dijital ikizi üzerinde siber saldırı senaryolarının görselleştirilmesini sağlar. Python scriptleri ile üretilen MQTT mesajları, Unity tarafında SCADA/HMI, 3B model, alarm paneli, duman, ses, ışık ve kamera focus davranışlarına dönüştürülür.
 
-Projede üç ana saldırı senaryosu uygulanmıştır:
+Projede dört ana saldırı senaryosu uygulanmıştır:
 
 1. Yetkisiz kesici açma/kapama saldırısı
 2. Cooling false data injection saldırısı
 3. Trafo yağ seviyesi / yağ sıcaklığı kritik alarmı
+4. Bara gerilim dengesizliği / voltage sag saldırısı
 
-Bu senaryoların her biri dijital ikizde fiziksel bir karşılığa sahiptir. Kesici saldırısında kesici hareket eder ve enerji hattı değişir. Cooling FDI saldırısında gerçek sıcaklık yükselir, duman ve alarm oluşur. Yağ kritik alarm senaryosunda yağ sıcaklığı ve seviyesi üzerinden Buchholz rölesi uyarısı üretilir, trafo alarm durumuna geçer.
+Bu senaryoların her biri dijital ikizde fiziksel bir karşılığa sahiptir. Kesici saldırısında kesici hareket eder ve enerji hattı değişir. Cooling FDI saldırısında gerçek sıcaklık yükselir, duman ve alarm oluşur. Yağ kritik alarm senaryosunda yağ sıcaklığı ve seviyesi üzerinden Buchholz rölesi uyarısı üretilir, trafo alarm durumuna geçer. Voltage sag senaryosunda ise A/B/C faz gerilimleri bozulur, bara durumu SCADA’da arıza olarak görünür ve koruma rölesi düşük/aşırı gerilim uyarısı üretir.
 
 Sonuç olarak proje, enerji sistemleri siber güvenliği alanında dijital ikiz yaklaşımının eğitim, demonstrasyon ve farkındalık oluşturma açısından güçlü bir yöntem olduğunu göstermektedir. SCADA ekranı, MQTT haberleşmesi ve 3B sahne davranışları birlikte kullanıldığında, siber saldırıların yalnızca yazılımsal değil aynı zamanda fiziksel sonuçları da anlaşılır hale gelir.
 
-## 22. Dosya ve Script Özeti
+## 23. Dosya ve Script Özeti
 
 | Dosya | Görev |
 |---|---|
 | `Assets/_Scripts/SimpleMQTTReceiver.cs` | Temel MQTT sensör verileri ve eski telemetri saldırı davranışları |
 | `Assets/_Scripts/BreakerMQTTReceiver.cs` | `substation/breaker/control` topic’ini dinler |
 | `Assets/_Scripts/BreakerController.cs` | Kesici komutlarını işler, IDS ve görsel hareketi yönetir |
-| `Assets/_Scripts/CoolingFalseDataReceiver.cs` | Cooling FDI, smoke, oil alarm ve ilgili MQTT topic’lerini işler |
+| `Assets/_Scripts/CoolingFalseDataReceiver.cs` | Cooling FDI, smoke, oil alarm, voltage sag ve ilgili MQTT topic’lerini işler |
 | `Assets/_Scripts/FDISmokeEffectController.cs` | Duman, alarm ışığı, alarm sesi ve kamera focus davranışını yönetir |
 | `Assets/_Scripts/SCADAHMIController.cs` | SCADA/HMI genel durum yönetimi |
 | `Assets/_Scripts/AlarmPanelController.cs` | Alarm paneli mesajlarını yönetir |
@@ -882,8 +1131,9 @@ Sonuç olarak proje, enerji sistemleri siber güvenliği alanında dijital ikiz 
 | `Assets/_Scripts/AttackScripts/breaker_attack.py` | Yetkisiz/normal kesici komutları yayınlar |
 | `Assets/_Scripts/AttackScripts/cooling_false_data_attack.py` | Cooling FDI saldırısını başlatır/durdurur |
 | `Assets/_Scripts/AttackScripts/oil_critical_alarm_attack.py` | Yağ sıcaklığı/seviyesi ve Buchholz alarm senaryosunu başlatır/durdurur |
+| `Assets/_Scripts/AttackScripts/voltage_sag_attack.py` | Bara gerilim dengesizliği, voltage sag ve over voltage senaryolarını başlatır/durdurur |
 
-## 23. Tez İçin Önerilen Bölüm Başlıkları
+## 24. Tez İçin Önerilen Bölüm Başlıkları
 
 Bu proje tez metnine dönüştürülürken şu bölüm yapısı kullanılabilir:
 
@@ -899,6 +1149,6 @@ Bu proje tez metnine dönüştürülürken şu bölüm yapısı kullanılabilir:
 10. Yetkisiz Kesici Açma/Kapama Saldırısı
 11. False Data Injection ve Soğutma Manipülasyonu
 12. Trafo Yağ Kritik Alarm Senaryosu
-13. Testler ve Bulgular
-14. Sonuç ve Gelecek Çalışmalar
-
+13. Bara Gerilim Dengesizliği ve Voltage Sag Senaryosu
+14. Testler ve Bulgular
+15. Sonuç ve Gelecek Çalışmalar

@@ -43,6 +43,14 @@ public class CoolingFalseDataReceiver : MonoBehaviour
     public Color oilAlarmColor = new Color(1f, 0.05f, 0.02f, 1f);
     public Color oilAlarmEmissionColor = new Color(1f, 0.1f, 0.02f, 1f);
 
+    [Header("Busbar Voltage Alarm")]
+    public float nominalPhaseVoltage = 34.5f;
+    public float voltageSagThreshold = 30f;
+    public float voltageOverThreshold = 38f;
+    public float voltageImbalanceThreshold = 3f;
+    public Color voltageWarningColor = new Color(1f, 0.82f, 0.25f, 1f);
+    public Color voltageFaultColor = new Color(1f, 0.05f, 0.02f, 1f);
+
     [Header("Smoke Effect")]
     public ParticleSystem smokeParticle;
     public ParticleSystem[] smokeParticles;
@@ -105,10 +113,16 @@ public class CoolingFalseDataReceiver : MonoBehaviour
     bool falseDataInjectionActive;
     bool oilCriticalAlarmActive;
     bool buchholzRelayWarning;
+    bool voltageSagAlarmActive;
+    bool voltageOverAlarmActive;
+    bool voltageImbalanceAlarmActive;
     float fakeTemperature = 42f;
     float realTemperature = 45f;
     float oilTemperature;
     float oilLevel;
+    float voltageA;
+    float voltageB;
+    float voltageC;
     Timer smokeFocusRestoreTimer;
     bool smokeFocusActive;
     ParticleSystem visibleDemoSmokeParticle;
@@ -123,6 +137,13 @@ public class CoolingFalseDataReceiver : MonoBehaviour
     public bool IsOilCriticalAlarmActive => oilCriticalAlarmActive;
     public float OilTemperature => oilTemperature;
     public float OilLevel => oilLevel;
+    public bool IsVoltageAlarmActive => voltageSagAlarmActive || voltageOverAlarmActive || voltageImbalanceAlarmActive;
+    public bool IsVoltageSagAlarmActive => voltageSagAlarmActive;
+    public bool IsVoltageOverAlarmActive => voltageOverAlarmActive;
+    public bool IsVoltageImbalanceAlarmActive => voltageImbalanceAlarmActive;
+    public float VoltageA => voltageA;
+    public float VoltageB => voltageB;
+    public float VoltageC => voltageC;
 
     void Start()
     {
@@ -181,6 +202,12 @@ public class CoolingFalseDataReceiver : MonoBehaviour
                 {
                     falseDataInjectionActive = true;
                     AppendLog("Transformer oil critical alarm scenario armed");
+                }
+                else if (string.Equals(value, "voltage_sag", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(value, "voltage_over", StringComparison.OrdinalIgnoreCase))
+                {
+                    falseDataInjectionActive = true;
+                    AppendLog("Busbar voltage disturbance scenario armed");
                 }
                 else
                 {
@@ -258,6 +285,40 @@ public class CoolingFalseDataReceiver : MonoBehaviour
                     string.Equals(value, "START", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(value, "CRITICAL", StringComparison.OrdinalIgnoreCase);
                 SetOilCriticalAlarm(oilAlarmOn, oilAlarmOn ? "Oil critical alarm command received" : "Oil critical alarm cleared");
+                break;
+
+            case "substation/busbar/voltage/a":
+                if (float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out float va))
+                    voltageA = va;
+                if (IsVoltageAlarmActive)
+                    EvaluateVoltageAlarm("Phase A voltage updated");
+                break;
+
+            case "substation/busbar/voltage/b":
+                if (float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out float vb))
+                    voltageB = vb;
+                if (IsVoltageAlarmActive)
+                    EvaluateVoltageAlarm("Phase B voltage updated");
+                break;
+
+            case "substation/busbar/voltage/c":
+                if (float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out float vc))
+                    voltageC = vc;
+                if (IsVoltageAlarmActive)
+                    EvaluateVoltageAlarm("Phase C voltage updated");
+                break;
+
+            case "substation/busbar/voltage_alarm":
+                bool voltageAlarmOn =
+                    string.Equals(value, "ON", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(value, "START", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(value, "CRITICAL", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(value, "SAG", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(value, "IMBALANCE", StringComparison.OrdinalIgnoreCase);
+                if (voltageAlarmOn)
+                    EvaluateVoltageAlarm("Voltage alarm command received", true);
+                else
+                    ClearVoltageAlarm("Voltage alarm cleared");
                 break;
         }
     }
@@ -703,7 +764,11 @@ public class CoolingFalseDataReceiver : MonoBehaviour
                topic == "substation/transformer/oil_temperature" ||
                topic == "substation/transformer/oil_level" ||
                topic == "substation/protection/buchholz" ||
-               topic == "substation/transformer/oil_alarm";
+               topic == "substation/transformer/oil_alarm" ||
+               topic == "substation/busbar/voltage/a" ||
+               topic == "substation/busbar/voltage/b" ||
+               topic == "substation/busbar/voltage/c" ||
+               topic == "substation/busbar/voltage_alarm";
     }
 
     void EnqueueMessage(string topic, string payload)
@@ -914,6 +979,75 @@ public class CoolingFalseDataReceiver : MonoBehaviour
 
             ApplyMaterialHeat(targetRenderer.material, oilAlarmColor, oilAlarmEmissionColor);
         }
+    }
+
+    void EvaluateVoltageAlarm(string reason, bool forceAlarm = false)
+    {
+        bool sag = voltageA < voltageSagThreshold || voltageB < voltageSagThreshold || voltageC < voltageSagThreshold;
+        bool over = voltageA > voltageOverThreshold || voltageB > voltageOverThreshold || voltageC > voltageOverThreshold;
+        float maxVoltage = Mathf.Max(voltageA, Mathf.Max(voltageB, voltageC));
+        float minVoltage = Mathf.Min(voltageA, Mathf.Min(voltageB, voltageC));
+        bool imbalance = maxVoltage - minVoltage >= voltageImbalanceThreshold;
+        bool active = forceAlarm || sag || over || imbalance;
+
+        if (!active)
+        {
+            ClearVoltageAlarm(reason);
+            return;
+        }
+
+        bool firstActivation = !IsVoltageAlarmActive;
+        voltageSagAlarmActive = sag;
+        voltageOverAlarmActive = over;
+        voltageImbalanceAlarmActive = imbalance || (forceAlarm && !sag && !over);
+        falseDataInjectionActive = true;
+
+        if (firstActivation)
+        {
+            string voltageAlarmLabel = sag ? "UNDER VOLTAGE ALARM" : over ? "OVER VOLTAGE ALARM" : "VOLTAGE IMBALANCE ALARM";
+
+            if (fdiSmokeEffectController == null)
+                fdiSmokeEffectController = FDISmokeEffectController.GetOrCreate();
+            if (fdiSmokeEffectController != null)
+                fdiSmokeEffectController.StartSmokeAttack();
+
+            AppendLog("BUSBAR VOLTAGE SAG / IMBALANCE DETECTED");
+            AppendLog($"Voltage A: {voltageA:F1} kV");
+            AppendLog($"Voltage B: {voltageB:F1} kV");
+            AppendLog($"Voltage C: {voltageC:F1} kV");
+            AppendLog(voltageAlarmLabel);
+            AppendLog("IED VOLTAGE PROTECTION WARNING");
+            AppendSecurityLog("Voltage Integrity Attack Detected");
+
+            if (alarmPanelController != null)
+            {
+                alarmPanelController.AddAlarm("BUSBAR VOLTAGE SAG / IMBALANCE", AlarmPanelController.AlarmSeverity.Critical);
+                alarmPanelController.AddAlarm(voltageAlarmLabel, AlarmPanelController.AlarmSeverity.Critical);
+            }
+        }
+
+        Debug.LogWarning($"[CoolingFalseDataReceiver][VOLTAGE] {reason}");
+    }
+
+    void ClearVoltageAlarm(string reason)
+    {
+        if (!IsVoltageAlarmActive)
+            return;
+
+        voltageSagAlarmActive = false;
+        voltageOverAlarmActive = false;
+        voltageImbalanceAlarmActive = false;
+        falseDataInjectionActive = oilCriticalAlarmActive || alarmSuppressionOn;
+        voltageA = nominalPhaseVoltage;
+        voltageB = nominalPhaseVoltage;
+        voltageC = nominalPhaseVoltage;
+
+        if (fdiSmokeEffectController != null && !oilCriticalAlarmActive && !smokeOn)
+            fdiSmokeEffectController.StopSmokeAttack();
+
+        AppendLog("Busbar voltage alarm cleared");
+        AppendLog($"Voltage A/B/C: {voltageA:F1}/{voltageB:F1}/{voltageC:F1} kV");
+        Debug.Log($"[CoolingFalseDataReceiver][VOLTAGE] {reason}");
     }
 
     void ConfigureSmokeParticleForDemo(ParticleSystem particle)
@@ -1133,10 +1267,16 @@ public class CoolingFalseDataReceiver : MonoBehaviour
         falseDataInjectionActive = false;
         oilCriticalAlarmActive = false;
         buchholzRelayWarning = false;
+        voltageSagAlarmActive = false;
+        voltageOverAlarmActive = false;
+        voltageImbalanceAlarmActive = false;
         fakeTemperature = 42f;
         realTemperature = 45f;
         oilTemperature = normalOilTemperature;
         oilLevel = normalOilLevel;
+        voltageA = nominalPhaseVoltage;
+        voltageB = nominalPhaseVoltage;
+        voltageC = nominalPhaseVoltage;
 
         ApplyCoolingState();
         RestoreOriginalMaterialState();
